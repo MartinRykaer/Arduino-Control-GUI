@@ -1,0 +1,264 @@
+# -*- coding: utf-8 -*-
+"""
+
+------------ ----    ---- ------------ --------     ------    
+************ ****    **** ************ ********    ********   
+------------ ----    ---- ----           ----     ----------  
+    ****     ************ ************   ****    ****    **** 
+    ----     ------------ ------------   ----    ------------ 
+    ****     ****    **** ****           ****    ************ 
+    ----     ----    ---- ------------ --------  ----    ---- 
+    ****     ****    **** ************ ********  ****    ****
+
+Created on Mon Apr 24 13:54:06 2023
+
+@author: mxg635
+"""
+
+import streamlit as st
+import pandas as pd
+import serial
+import time
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import datetime as dt
+import matplotlib.pyplot as plt
+import os
+
+# Connect to Arduino
+def connect_to_arduino():
+    try:
+        arduino = serial.Serial(port="COM5", baudrate=115200)
+        arduino.flush()
+        return arduino
+    except serial.serialutil.SerialException:
+        st.error("Failed to connect to Arduino. Please check the connection and try again.")
+        return None
+
+
+#backup every 1000 inputs
+
+
+
+
+def save_data_func(fp, fn, df):
+    
+    nu = dt.datetime.now().strftime("%Y_%m_%d-%I_%M_%S_%p")
+    path_to_use = fp+'\\'+fn+'_'+nu+".csv"
+    
+    df.to_csv(path_to_use)
+    
+    print(f'saved to {path_to_use}')
+    return()
+
+def backup_data(fp, fn, df):
+    path_to_use = fp+'\\'+fn+'_backup.csv'
+    
+    df.to_csv(path_to_use)
+    
+    print(f'backed up to {path_to_use}')
+    return()
+
+def test_values(tv, frq, dc, bv):
+    er = 0
+    ret_st = 'INPUT ERROR\nPlease note that\n'
+    if (0 <= tv <= 1000):
+        pass
+    else:
+        ret_st = ret_st + f'Top V {tv} must be within 0-1000\n'
+        er = 1  
+    if (1 <= frq <=500):
+        pass
+    else:
+        ret_st = ret_st + f'Frequency {frq} must be within 1-500\n'
+        er = 1
+    if (0 <= dc <= 100):
+        pass
+    else:
+        ret_st = ret_st + f'Duty cycle {dc} must be within 0-100\n'
+        er = 1
+    if (0 <= bv <= 1000) :
+        pass
+    else:
+        ret_st = ret_st + f'Offset Voltage {bv} must be within 0-1000 and <= top voltage {tv}'
+        er = 1
+    
+    if er == 0:
+        return(0)
+    elif er == 1:
+        return(ret_st)
+
+def plot_signal_voltage(out_df):
+    #everything is already datetime objects.
+    timelist = out_df['Time'].tolist()
+    firsttime =timelist[0]
+    time_delta_list = []
+    for entry in timelist:
+        curtimedelta = (entry-firsttime).total_seconds()
+        time_delta_list.append(curtimedelta/60)
+    
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(x=time_delta_list, y=out_df['UV_SIGNAL'].astype(float), name='Trace 1'))
+    fig.add_trace(go.Scatter(x=time_delta_list, y=out_df['V1'].astype(float), name='Trace 2'))
+    
+    st.plotly_chart(fig)
+    return()
+
+if "arduino" not in st.session_state:
+    try:
+        st.session_state.arduino = connect_to_arduino()
+    except:
+        pass
+
+if not 'iteration' in st.session_state:
+    st.session_state.iteration = 0
+
+
+reset_button = st.button("Reset Data")
+stop_button = st.button("Stop")
+
+update_figure = st.button('Update plot')
+save_data = st.button('Save data')
+log_text = st.empty()
+connect_button = st.button('connect to arduino')
+
+
+# Create sidebar inputs
+with st.sidebar.form('input_form'):
+    use_classic_mode = st.sidebar.checkbox("Use classic mode - only needs the top voltage.")
+    tv = st.sidebar.number_input("Top voltage", value=50)
+    bv = st.sidebar.number_input("Bottom voltage", value=20)
+    freq = st.sidebar.number_input("Freq 1-500", value=50)
+    duty_cycle = st.sidebar.number_input("Duty Cycle 0-100", value=50)
+    save_path = st.sidebar.text_input('Savepath', value = 'C:\\Users\\CPRMS\\OneDrive\\Desktop\\ZeusHV')
+    save_file_name = st.sidebar.text_input('Filename', value = 'UV_Trace')
+
+
+    submit_button = st.form_submit_button("Start/update")
+
+
+
+
+if connect_button:
+    try:
+        st.session_state.arduino = connect_to_arduino()
+    except:
+        pass
+
+
+
+# Create empty elements for logging and output data
+
+
+#fig = plt.subplots()
+#the_plot = st.pyplot(plt)
+if update_figure:
+    if "output_df" in st.session_state:
+        plot_signal_voltage(st.session_state.output_df)
+    else:
+        log_text.text('Cant plot - no data.')
+
+# Create data frame if not already created
+if "output_df" not in st.session_state:
+    st.session_state.output_df = pd.DataFrame(columns=["V1", "V2", "V3", "V4", "V5", "C1", "C2", "C3", "C4", "C5", "UV_SIGNAL", "CC",'Frequency','PulseWidth', 'Time'])
+
+output_table = st.empty()
+
+if save_data:
+    if "output_df" in st.session_state:
+        save_data_func(save_path, save_file_name, st.session_state.output_df)
+        
+    else:
+        log_text.text('Cant save - no data.')
+
+if reset_button:
+    st.session_state.output_df = pd.DataFrame(columns=["V1", "V2", "V3", "V4", "V5", "C1", "C2", "C3", "C4", "C5", "UV_SIGNAL", "CC",'Frequency','PulseWidth', 'Time'])       
+        
+        
+        
+# Start or continue data acquisition
+if submit_button:
+    if use_classic_mode:
+        ard_string = str(500)+'_'+str(0)+'_'+str(tv)+'_'+str(0)+'_0_0_0_1_0_0_0_0_0'#bias == 1 when running?
+        log_text.text(ard_string)
+        #st.session_state.arduino.write(bytes(ard_string,'utf-8'))
+    
+    else:
+        v1 = (tv+bv)/2
+        v2 = tv - bv
+        
+        #Test values and send to arduino.
+        if not test_values(v2, freq, duty_cycle, v1) == 0:#Do I need to close arduino con here?
+            log_text.text(test_values(v2, freq, duty_cycle, v1))
+            #st.stop()
+        
+        else:#test for changes to this string?
+            ard_string = str(freq)+'_'+str(duty_cycle)+'_'+str(v1)+'_'+str(v2)+'_0_0_0_1_1_0_0_0_1'#bias == 1 when running?
+            log_text.text(ard_string)
+            st.session_state.arduino.write(bytes(ard_string,'utf-8'))
+            
+            duty_cycle_value = duty_cycle / 100.0
+        
+            #Create the plot
+            fig, ax = plt.subplots()
+            
+            #Fuck this streamlit shit
+            ax.plot([0, duty_cycle_value], [bv, bv], 'b-', linewidth=2)
+            ax.plot([duty_cycle_value, duty_cycle_value], [bv, tv], 'b-', linewidth=2)
+            ax.plot([duty_cycle_value, 1], [tv, tv], 'b-', linewidth=2)
+            
+            #Set the plot limits
+            ax.set_xlim(0, 1)
+            ax.set_ylim(bv-50, tv+50)
+            
+            ax.set_title('Duty_Cycle example')
+            
+            #Display the plot in the sidebar
+            st.sidebar.pyplot(fig)
+
+
+if stop_button:
+    if 'arduino' in st.session_state:
+        st.session_state.arduino.write(bytes('0_0_0_0_0_0_0_0_0_0_0_0_0','utf-8'))
+        v2 = 0#will this change value in the button?
+        v1 = 0
+        freq = 0
+        duty_cycle = 0
+        st.session_state.arduino.close()
+        del st.session_state.arduino#do I want this?
+    
+
+
+
+
+
+else:
+    if 'arduino' in st.session_state:
+        if not st.session_state.arduino == None:        
+            while True:
+
+                # Read from Arduino
+                if st.session_state.arduino.inWaiting():
+
+                    input_text = st.session_state.arduino.readline().decode("utf-8")
+                    input_list = input_text.strip().split("_")
+                    if len(input_list) == 14:
+                        input_list.append(dt.datetime.now())
+                        st.session_state.output_df.loc[len(st.session_state.output_df)] = input_list
+                    else:
+                        print(input_list)
+                    # Update log and data elements
+
+                    output_table.table(st.session_state.output_df.tail(5))
+                    
+                    #Update every 100 iterations
+                    st.session_state.iteration += 1
+                    if st.session_state.iteration == 1000:
+                        st.session_state.iteration = 0
+                        if "output_df" in st.session_state:
+                            backup_data(save_path, save_file_name, st.session_state.output_df)
+
+                else:
+                    pass
+        
